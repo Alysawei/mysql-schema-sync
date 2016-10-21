@@ -3,8 +3,10 @@ package internal
 import (
 	"fmt"
 	"log"
+	"net/mail"
 	"net/smtp"
 	"strings"
+	"crypto/tls"
 )
 
 // EmailStruct email conf info
@@ -14,6 +16,8 @@ type EmailStruct struct {
 	From         string `json:"from"`
 	Password     string `json:"password"`
 	To           string `json:"to"`
+	SSL          bool   `json:"ssl"`
+        Cc           string `json:"cc"`
 }
 
 const tableStyle = `
@@ -59,6 +63,17 @@ func (m *EmailStruct) SendMail(title string, body string) {
 			sendTo = append(sendTo, _to)
 		}
 	}
+	
+	var sendCc [] String
+	if m.Cc != "" {
+          _cc := strings.Split(m.Cc, ";")
+          for _, _to := range _cc {
+              _to = strings.TrimSpace(_to)
+              if _to != "" && strings.Contains(_to, "@") {
+                  sendCc = append(sendCc, _to)
+              }
+          }
+      }
 
 	if len(sendTo) < 1 {
 		log.Println("mail receiver is empty")
@@ -68,11 +83,83 @@ func (m *EmailStruct) SendMail(title string, body string) {
 	body = tableStyle + "\n" + body
 	body += "<br/><hr style='border:none;border-top:1px solid #ccc'/><center>Powered by <a href='" + AppURL + "'>mysql-schema-sync</a>&nbsp;" + Version + "</center>"
 
-	msgBody := fmt.Sprintf("To: %s\r\nContent-Type: text/html;charset=utf-8\r\nSubject: %s\r\n\r\n%s", strings.Join(sendTo, ";"), title, body)
+	 if m.Cc == "" {
+              msgBody := fmt.Sprintf("To: %s\r\nContent-Type: text/html;charset=utf-8\r\nSubject: %    s\r\n\r\n%s", strings.Join(sendTo, ";"), title, body)
+      } else {
+              msgBody := fmt.Sprintf("To: %s\r\nCc: %s\r\nContent-Type: text/html;charset=utf-8\r\n    Subject: %s\r\n\r\n%s", strings.Join(sendTo, ";"), strings.Join(sendTo, ";"), title, body)
+      }
+
+	 if m.SSL {
+            tlsconfig := &tls.Config {
+                InsecureSkipVerify: true,
+                ServerName: addrInfo[0],
+            }
+    
+            conn, err := tls.Dial("tcp", m.SMTPHost, tlsconfig)
+            if err != nil {
+                goto ERROR
+            }
+    
+            c, err := smtp.NewClient(conn, addrInfo[0])
+            if err != nil {
+                goto ERROR
+            }
+    
+            err = c.Auth(auth);
+            if err != nil {
+                goto ERROR
+            }
+    
+    
+            m, err := mail.ParseAddress(e.From)
+            if err != nil {
+                goto ERROR
+            }
+    
+            err = c.Mail(from.Address)
+            if  err != nil {
+                goto ERROR
+            }
+    
+            allTo := append(sendTo, sendCc...)
+            for _, _to := range allTo {
+                addr, err := mail.ParseAddress(to[i])
+                if err != nil {
+                 goto ERROR
+                }
+    
+             err = c.Rcpt(addr)
+ 
+                if err != nil {
+                    goto ERROR
+                }
+            }
+    
+            w, err := c.Data()
+            if  err != nil {
+                goto ERROR
+            }
+    
+            _, err = w.Write([]byte(msgBody))
+            if err != nil {
+                goto ERROR
+            }
+    
+            err = w.Close()
+            if err != nil {
+                goto ERROR
+            }
+    
+            c.Quit()
+    
+        } else {
 	err := smtp.SendMail(m.SMTPHost, auth, m.From, sendTo, []byte(msgBody))
+	}
+	
 	if err == nil {
 		log.Println("send mail success")
 	} else {
+		ERROR:
 		log.Println("send mail failed,err:", err)
 	}
 }
